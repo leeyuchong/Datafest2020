@@ -1,0 +1,1039 @@
+---
+title: "Multilevel Multiple Linear Regression"
+author: "Adam Chapnik"
+date: "May 29, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(rattle.data)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(recipes)
+library(caret)
+library(MASS)
+library(nnet)
+library(leaps)
+library(lme4)
+library(car)
+library(leaps)
+library(FactoMineR)
+library(subselect)
+library(nlme)
+fulldata <- read.csv("Dataframe_Draft.csv")
+```
+
+
+```{r}
+threedepdata <- fulldata
+threedepdata$plan <- ifelse(threedepdata$plan == "Proposing a hybrid model", "Planning for in-person", ifelse(threedepdata$plan == "Considering a range of scenarios", "Waiting to decide", ifelse(threedepdata$plan == "Planning for in-person", "Planning for in-person", ifelse(threedepdata$plan == "Waiting to decide", "Waiting to decide", ifelse(threedepdata$plan == "Planning for online", "Planning for online", 99)))))
+threedepdata$plan <- ifelse(threedepdata$plan == "Planning for in-person", 1, ifelse(threedepdata$plan == "Planning for online", 0, ifelse(threedepdata$plan == "Waiting to decide", 0.5, 99)))
+threedepdata$X <- NULL
+threedepdata$X.1 <- NULL
+datadep3 <- threedepdata
+datadep3 <- datadep3 %>% filter(plan != 99)
+write.csv(datadep3, "Dataframe_OrdinalPlans.csv")
+```
+
+```{r}
+df <- datadep3
+```
+
+```{r}
+df1 <- df %>% dplyr::select("state","city","countynm") ## JUST location variables
+
+a <- df[ , grepl( "saeq9ot" , names( df ) ) ]
+b <- df[ , grepl( "saeq9at" , names( df ) ) ]
+c <- df[ , grepl( "saoutlt" , names( df ) ) ]
+d <- df[ , grepl( "sanit" , names( df ) ) ]
+e <- df[ , grepl( "sa09mat" , names( df ) ) ]
+f <- df[ , grepl( "sa10mat" , names( df ) ) ]
+g <- df[ , grepl( "sa11mat" , names( df ) ) ]
+h <- df[ , grepl( "sa12mat" , names( df ) ) ]
+i <- df[ , grepl( "sa09mot" , names( df ) ) ]
+j <- df[ , grepl( "sa10mot" , names( df ) ) ]
+k <- df[ , grepl( "sa11mot" , names( df ) ) ]
+l <- df[ , grepl( "sa12mot" , names( df ) ) ]
+m <- df[ , grepl( "sa09mct" , names( df ) ) ]
+n <- df[ , grepl( "sa10mct" , names( df ) ) ]
+o <- df[ , grepl( "sa11mct" , names( df ) ) ]
+p <- df[ , grepl( "sa12mct" , names( df ) ) ]
+a <- cbind(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) 
+b <- df %>% dplyr::select("plan","Sent_Score","groffer","sector","hbcu","Gift","calsys","indistrictug","instateug","outstateug","indistrictg","instateg","outstateg","internationals","rrptct","stufacr","c18ugprf","f1systyp","Application","Endowment","Total_Expense","Total_Revenue","Total_Liabilities","Total_Asset","Tuition","Type")
+df2 <- cbind(a,b)  ## Budget/Transition-ease variables + Sentiment and Plan
+      
+      
+a <- df[ , grepl( "eaptot" , names( df ) ) ]
+b <- df[ , grepl( "eappt" , names( df ) ) ]
+c <- df[ , grepl( "eftotlt" , names( df ) ) ]
+d <- df[ , grepl( "satotlt" , names( df ) ) ]
+e <- df[ , grepl( "sa_9mct" , names( df ) ) ]
+f <- df[ , grepl( "sainstt" , names( df ) ) ]
+g <- df[ , grepl( "sanin" , names( df ) ) ]
+h <- df[ , grepl( "efdeexc" , names( df ) ) ]
+i <- df[ , grepl( "efdesom" , names( df ) ) ]
+a <- cbind(a,b,c,d,e,f,g,h,i)
+b <- df %>% dplyr::select("plan","Sent_Score","state.cases","state.deaths","county.cases","county.deaths","hospital","locale","c18ugprf","f1systyp","Size","Enrollment","slo","dstnugc","dstngc","distcrs","disabpct","alloncam","room","roomcap","board","number_locations","internationals") 
+df3 <- cbind(a,b) ## COVID risk + Sentiment and Plan
+
+ncol(df2)
+```
+
+
+```{r}
+debug_contr_error <- function (dat, subset_vec = NULL) {
+  if (!is.null(subset_vec)) {
+    ## step 0
+    if (mode(subset_vec) == "logical") {
+      if (length(subset_vec) != nrow(dat)) {
+        stop("'logical' `subset_vec` provided but length does not match `nrow(dat)`")
+        }
+      subset_log_vec <- subset_vec
+      } else if (mode(subset_vec) == "numeric") {
+      ## check range
+      ran <- range(subset_vec)
+      if (ran[1] < 1 || ran[2] > nrow(dat)) {
+        stop("'numeric' `subset_vec` provided but values are out of bound")
+        } else {
+        subset_log_vec <- logical(nrow(dat))
+        subset_log_vec[as.integer(subset_vec)] <- TRUE
+        } 
+      } else {
+      stop("`subset_vec` must be either 'logical' or 'numeric'")
+      }
+    dat <- base::subset(dat, subset = subset_log_vec)
+    } else {
+    ## step 1
+    dat <- stats::na.omit(dat)
+    }
+  if (nrow(dat) == 0L) warning("no complete cases")
+  ## step 2
+  var_mode <- sapply(dat, mode)
+  if (any(var_mode %in% c("complex", "raw"))) stop("complex or raw not allowed!")
+  var_class <- sapply(dat, class)
+  if (any(var_mode[var_class == "AsIs"] %in% c("logical", "character"))) {
+    stop("matrix variables with 'AsIs' class must be 'numeric'")
+    }
+  ind1 <- which(var_mode %in% c("logical", "character"))
+  dat[ind1] <- lapply(dat[ind1], as.factor)
+  ## step 3
+  fctr <- which(sapply(dat, is.factor))
+  if (length(fctr) == 0L) warning("no factor variables to summary")
+  ind2 <- if (length(ind1) > 0L) fctr[-ind1] else fctr
+  dat[ind2] <- lapply(dat[ind2], base::droplevels.factor)
+  ## step 4
+  lev <- lapply(dat[fctr], base::levels.default)
+  nl <- lengths(lev)
+  ## return
+  list(nlevels = nl, levels = lev)
+}
+
+debug_contr_error(df2)$nlevels
+df2 <- df2[,colSums(is.na(df2))<nrow(df2)]
+df2$Type <- NULL
+
+which.na <- function(x){
+  a <- all(is.na(x))
+  return(a)
+}
+a <- c(1:ncol(df2))
+a <- lapply(a, which.na)
+
+df2 <- df2[which(colMeans(!is.na(df2)) > 0.95)]
+df2 <- na.omit(df2)
+nrow(df2)
+ncol(df2)
+```
+
+
+
+```{r}
+fulldf1 <- lm(plan ~ ., data = df2)
+summary(fulldf1)
+```
+
+```{r}
+mod1BIC <- stepAIC(fulldf1, k = log(nrow(df2)), trace = FALSE)
+mod1AIC <- stepAIC(fulldf1, k = 2, trace = FALSE)
+```
+
+```{r}
+summary(mod1AIC)
+AIC(mod1AIC)
+BIC(mod1AIC)
+```
+
+```{r}
+summary(mod1BIC)
+AIC(mod1BIC)
+BIC(mod1BIC) ## mod2BIC has better AIC and BIC
+```
+
+```{r}
+vif(mod1AIC) ## mod1AIC has incredibly high multicolinearity
+vif(mod1BIC) ## this is more reasonable, but still too high
+```
+
+## I chose to start with mod1BIC ##
+
+Source: http://r-statistics.co/Model-Selection-in-R.html
+
+```{r}
+## Starting with mod1 ##
+mod1 <- mod1BIC
+## Recursively remove non-significant variables ##
+all_vars <- names(mod1[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod1)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan*Sent_Score ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df2)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod1)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod1) ## NO INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1)
+AIC(mod1)
+```
+
+```{r}
+mod2 <- mod1BIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod2)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan*Sent_Score ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df2)  # re-build model with new formula
+  all_vifs <- car::vif(mod2)
+}
+summary(mod2) ## NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2)
+AIC(mod2)
+```
+
+```{r}
+## Starting with mod1 ##
+mod3 <- mod2
+## Recursively remove non-significant variables ##
+all_vars <- names(mod3[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod3)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan*Sent_Score ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod3 <- lm(myForm, data=df2)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod3)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod3) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+
+Compare models (based on mod1BIC) using ANOVA
+
+```{r}
+lin.mod.budget1 <- mod1 ## SAVE THE BEST MODEL##
+```
+
+## AGAIN, BUT WITH mod1AIC (just in case) ##
+
+```{r}
+mod1 <- mod1AIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod1)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df2)  # re-build model with new formula
+  all_vifs <- car::vif(mod1)
+}
+summary(mod1) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1)
+```
+
+```{r}
+## Starting with mod1 ##
+mod2 <- mod1
+## Recursively remove non-significant variables ##
+all_vars <- names(mod2[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod2)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df2)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod2)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod2) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2)
+AIC(mod2)
+```
+
+Compare all models (based on mod1BIC) using ANOVA
+
+```{r}
+anova(mod2, mod1)
+## SAVE THE BEST MODEL OF THESE
+lin.mod.budget2 <- mod2
+```
+
+Compare the results
+
+```{r}
+## Use best two models so far ##
+summary(lin.mod.budget1)
+summary(lin.mod.budget2) ## THIS MODEL IS BETTER ##
+modBestBudget <- lin.mod.budget2
+```
+
+## NOW, TEST DIFFERENT MULTILEVEL MODELS ##
+
+Source: http://www.bristol.ac.uk/media-library/sites/cmm/migrated/documents/5-r-sample.pdf
+
+Also for reference: https://rstudio-pubs-static.s3.amazonaws.com/78961_fe5b5c6a77f446eca899afbb32bd1dc7.html#hlm-models-and-analyses (HLM Models and Analyses)
+
+Basically, what needs to be done here is to compare 7 different models:
+
+```{r}
+# dataset
+a <- df[ , grepl( "saeq9ot" , names( df ) ) ]
+b <- df[ , grepl( "saeq9at" , names( df ) ) ]
+c <- df[ , grepl( "saoutlt" , names( df ) ) ]
+d <- df[ , grepl( "sanit" , names( df ) ) ]
+e <- df[ , grepl( "sa09mat" , names( df ) ) ]
+f <- df[ , grepl( "sa10mat" , names( df ) ) ]
+g <- df[ , grepl( "sa11mat" , names( df ) ) ]
+h <- df[ , grepl( "sa12mat" , names( df ) ) ]
+i <- df[ , grepl( "sa09mot" , names( df ) ) ]
+j <- df[ , grepl( "sa10mot" , names( df ) ) ]
+k <- df[ , grepl( "sa11mot" , names( df ) ) ]
+l <- df[ , grepl( "sa12mot" , names( df ) ) ]
+m <- df[ , grepl( "sa09mct" , names( df ) ) ]
+n <- df[ , grepl( "sa10mct" , names( df ) ) ]
+o <- df[ , grepl( "sa11mct" , names( df ) ) ]
+p <- df[ , grepl( "sa12mct" , names( df ) ) ]
+a <- cbind(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) 
+b <- df %>% dplyr::select("state","city","countynm","plan","Sent_Score","groffer","sector","hbcu","Gift","calsys","indistrictug","instateug","outstateug","indistrictg","instateg","outstateg","internationals","rrptct","stufacr","c18ugprf","f1systyp","Application","Endowment","Total_Expense","Total_Revenue","Total_Liabilities","Total_Asset","Tuition","Type")
+df2 <- cbind(a,b)  ## Budget/Transition-ease variables + Sentiment and Plan
+
+df2$Type <- NULL
+df2 <- df2[which(colMeans(!is.na(df2)) > 0.95)]
+df2 <- na.omit(df2)
+```
+
+```{r}
+summary(modBestBudget)
+```
+
+After finding the best random intercept, you can go on to try changing the variables as well, and even test for Mixed Effects (using the Likelihood Ratio test to compare). Although it's for a binomial model, this is also a useful resource: https://towardsdatascience.com/model-selection-101-using-r-c8437b5f9f99. 
+
+## NOW TO DEAL WITH THE COVID-RISK SUBSET ##
+
+```{r}
+debug_contr_error <- function (dat, subset_vec = NULL) {
+  if (!is.null(subset_vec)) {
+    ## step 0
+    if (mode(subset_vec) == "logical") {
+      if (length(subset_vec) != nrow(dat)) {
+        stop("'logical' `subset_vec` provided but length does not match `nrow(dat)`")
+        }
+      subset_log_vec <- subset_vec
+      } else if (mode(subset_vec) == "numeric") {
+      ## check range
+      ran <- range(subset_vec)
+      if (ran[1] < 1 || ran[2] > nrow(dat)) {
+        stop("'numeric' `subset_vec` provided but values are out of bound")
+        } else {
+        subset_log_vec <- logical(nrow(dat))
+        subset_log_vec[as.integer(subset_vec)] <- TRUE
+        } 
+      } else {
+      stop("`subset_vec` must be either 'logical' or 'numeric'")
+      }
+    dat <- base::subset(dat, subset = subset_log_vec)
+    } else {
+    ## step 1
+    dat <- stats::na.omit(dat)
+    }
+  if (nrow(dat) == 0L) warning("no complete cases")
+  ## step 2
+  var_mode <- sapply(dat, mode)
+  if (any(var_mode %in% c("complex", "raw"))) stop("complex or raw not allowed!")
+  var_class <- sapply(dat, class)
+  if (any(var_mode[var_class == "AsIs"] %in% c("logical", "character"))) {
+    stop("matrix variables with 'AsIs' class must be 'numeric'")
+    }
+  ind1 <- which(var_mode %in% c("logical", "character"))
+  dat[ind1] <- lapply(dat[ind1], as.factor)
+  ## step 3
+  fctr <- which(sapply(dat, is.factor))
+  if (length(fctr) == 0L) warning("no factor variables to summary")
+  ind2 <- if (length(ind1) > 0L) fctr[-ind1] else fctr
+  dat[ind2] <- lapply(dat[ind2], base::droplevels.factor)
+  ## step 4
+  lev <- lapply(dat[fctr], base::levels.default)
+  nl <- lengths(lev)
+  ## return
+  list(nlevels = nl, levels = lev)
+}
+
+debug_contr_error(df3)$nlevels
+df3 <- df3[,colSums(is.na(df3))<nrow(df3)]
+
+which.na <- function(x){
+  a <- all(is.na(x))
+  return(a)
+}
+a <- c(1:ncol(df3))
+a <- lapply(a, which.na)
+
+df <- df3[which(colMeans(!is.na(df3)) > 0.95)]
+df <- na.omit(df)
+nrow(df)
+ncol(df)
+df
+```
+
+```{r}
+fulldf2 <- lm(plan ~ ., data = df)
+summary(fulldf2)
+```
+
+```{r}
+mod2BIC <- stepAIC(fulldf2, k = log(nrow(df)), trace = FALSE)
+mod2AIC <- stepAIC(fulldf2, k = 2, trace = FALSE)
+```
+
+```{r}
+summary(mod2AIC)
+AIC(mod2AIC)
+BIC(mod2AIC)
+```
+
+```{r}
+summary(mod2BIC)
+AIC(mod2BIC)
+BIC(mod2BIC) ## mod2BIC has better AIC and BIC
+```
+
+```{r}
+vif(mod2AIC) ## mod2AIC is slightly worse than mod2BIC
+vif(mod2BIC)
+```
+
+## I chose to start with mod2BIC ##
+
+Source: http://r-statistics.co/Model-Selection-in-R.html
+
+```{r}
+mod1 <- mod2BIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod1)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod1)
+}
+summary(mod1) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1) ## No multicolinearity
+AIC(mod1) 
+BIC(mod1) ## AIC and BIC are worse than for mod2BIC and mod2AIC, AND mod2
+```
+
+```{r}
+## Starting with mod1 ##
+mod2 <- mod1
+## Recursively remove non-significant variables ##
+all_vars <- names(mod2[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod2)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod2)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod2) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2) ## No multicolinearity
+AIC(mod2) 
+BIC(mod2) ## Better AIC/BIC
+```
+
+Compare models (based on mod1BIC) using ANOVA
+
+```{r}
+anova(mod2, mod1) # mod1 is NOT better than mod2
+mod2.2 <- update(mod2, . ~ . + Sent_Score)
+anova(mod2, mod2.2) # Sent_Score does not help
+mod2.2 <- update(mod2, . ~ . + number_locations) ## Go through all possible additions
+# f1systyp*, slo**, roomcap**, number_locations***
+anova(mod2, mod2.2) # number_locations improves the model
+vif(mod2.2) # mod2.2 has no multicolinearity
+mod2.2.2 <- update(mod2.2, . ~ . + slo) ## Go through all possible additions
+# c18ugprf*, slo**, 
+anova(mod2.2, mod2.2.2) # slo improves the model
+vif(mod2.2.2) # mod2.2.2 has no multicolinearity
+BIC(mod2.2.2) # AIC/BIC also improve
+mod2.2.2.2 <- update(mod2.2.2, . ~ . + locale) # etc.
+anova(mod2.2.2, mod2.2.2.2) 
+vif(mod2.2.2.2) # perfect multicolinearity
+lin.mod.covid1 <- mod2.2.2.2 ## SAVE THE BEST MODEL##
+```
+
+## AGAIN, BUT WITH mod2AIC (just in case) ##
+
+```{r}
+## Starting with mod2AIC ##
+mod.test <- mod2AIC
+## Recursively remove non-significant variables ##
+all_vars <- names(mod.test[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod.test)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod.test <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod.test)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod.test) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod.test) # moderate multicolinearity
+AIC(mod.test)
+BIC(mod.test)
+```
+
+```{r}
+mod.test1 <- mod.test
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod.test1)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod.test1 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod.test1)
+}
+summary(mod.test1) ## THIS WILL HAVE NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod.test1) # no multicolinearity
+AIC(mod.test1)
+BIC(mod.test1)
+```
+
+
+```{r}
+mod1 <- mod2AIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod1)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod1)
+}
+summary(mod1) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1) # no multicolinearity
+AIC(mod1) # AIC is up
+BIC(mod1) # BIC is up
+```
+
+```{r}
+## Starting with mod1 ##
+mod2 <- mod1
+## Recursively remove non-significant variables ##
+all_vars <- names(mod2[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod2)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod2)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod2) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2) # no multicolinearity
+AIC(mod2)
+BIC(mod2) # both AIC/BIC are down from mod1
+```
+
+Compare all models (based on mod2BIC) using ANOVA
+
+```{r}
+## Make sure to include "mod3", from above
+anova(mod2, mod1) ## mod2 is more significant
+anova(mod.test1, mod.test) ## mod.test is more significant but has higher vif
+anova(mod2, mod.test1) ## mod.test1 is more significant
+mod2.2 <- update(mod.test1, . ~ . + Sent_Score) 
+anova(mod.test1, mod2.2) # Sent_Score is still insignificant
+mod2.2 <- update(mod.test1, . ~ . + number_locations) 
+anova(mod.test1, mod2.2) ## number_locations
+vif(mod2.2) # no multicolinearity
+AIC(mod2.2) # Not bad AIC
+mod2.2.2 <- update(mod2.2, . ~ . + locale)
+anova(mod2.2, mod2.2.2)
+vif(mod2.2.2)
+AIC(mod2.2.2)
+## SAVE THE BEST MODEL OF THESE
+lin.mod.covid2 <- mod2.2.2
+```
+
+```{r}
+summary(lin.mod.covid1)
+summary(lin.mod.covid2)
+modBestCovid <- lin.mod.covid2
+```
+
+## Full Dataset Model ##
+
+```{r}
+df <- datadep3
+```
+
+```{r}
+debug_contr_error <- function (dat, subset_vec = NULL) {
+  if (!is.null(subset_vec)) {
+    ## step 0
+    if (mode(subset_vec) == "logical") {
+      if (length(subset_vec) != nrow(dat)) {
+        stop("'logical' `subset_vec` provided but length does not match `nrow(dat)`")
+        }
+      subset_log_vec <- subset_vec
+      } else if (mode(subset_vec) == "numeric") {
+      ## check range
+      ran <- range(subset_vec)
+      if (ran[1] < 1 || ran[2] > nrow(dat)) {
+        stop("'numeric' `subset_vec` provided but values are out of bound")
+        } else {
+        subset_log_vec <- logical(nrow(dat))
+        subset_log_vec[as.integer(subset_vec)] <- TRUE
+        } 
+      } else {
+      stop("`subset_vec` must be either 'logical' or 'numeric'")
+      }
+    dat <- base::subset(dat, subset = subset_log_vec)
+    } else {
+    ## step 1
+    dat <- stats::na.omit(dat)
+    }
+  if (nrow(dat) == 0L) warning("no complete cases")
+  ## step 2
+  var_mode <- sapply(dat, mode)
+  if (any(var_mode %in% c("complex", "raw"))) stop("complex or raw not allowed!")
+  var_class <- sapply(dat, class)
+  if (any(var_mode[var_class == "AsIs"] %in% c("logical", "character"))) {
+    stop("matrix variables with 'AsIs' class must be 'numeric'")
+    }
+  ind1 <- which(var_mode %in% c("logical", "character"))
+  dat[ind1] <- lapply(dat[ind1], as.factor)
+  ## step 3
+  fctr <- which(sapply(dat, is.factor))
+  if (length(fctr) == 0L) warning("no factor variables to summary")
+  ind2 <- if (length(ind1) > 0L) fctr[-ind1] else fctr
+  dat[ind2] <- lapply(dat[ind2], base::droplevels.factor)
+  ## step 4
+  lev <- lapply(dat[fctr], base::levels.default)
+  nl <- lengths(lev)
+  ## return
+  list(nlevels = nl, levels = lev)
+}
+
+debug_contr_error(df)$nlevels
+df$institution <- NULL
+df$city <- NULL
+df$countynm <- NULL
+df$Type <- NULL
+df$Sentiment <- NULL
+df <- df[,colSums(is.na(df))<nrow(df)]
+
+df1 <- df[which(colMeans(!is.na(df)) > 0.98)]
+df1 <- na.omit(df1)
+nrow(df1)
+ncol(df1)
+```
+
+```{r}
+full <- lm(plan ~ ., data = df1)
+summary(full)
+AIC(full)
+BIC(full)
+```
+
+```{r}
+modBIC <- stepAIC(full, k = log(nrow(df1)), trace = FALSE)
+modAIC <- stepAIC(full, k = 2, trace = FALSE)
+```
+
+```{r}
+summary(modAIC)
+AIC(modAIC)
+BIC(modAIC)
+vif(modAIC)
+```
+
+```{r}
+summary(modBIC) ## worse R-squared
+AIC(modBIC) ## worse AIC
+BIC(modBIC) ## better BIC
+```
+
+```{r}
+vif(modAIC) ## modAIC has slightly less multicolinearity
+vif(modBIC)
+```
+
+## I chose to start with modBIC ##
+
+Source: http://r-statistics.co/Model-Selection-in-R.html
+
+```{r}
+mod1 <- modBIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod1)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod1)
+}
+summary(mod1) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1) ## No multicolinearity
+AIC(mod1) 
+BIC(mod1) ## AIC and BIC are worse than for mod2BIC and mod2AIC, AND mod2
+```
+
+```{r}
+## Starting with mod1 ##
+mod2 <- mod1
+## Recursively remove non-significant variables ##
+all_vars <- names(mod2[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod2)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod2)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod2) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2) ## No multicolinearity
+AIC(mod2) 
+BIC(mod2) ## AIC and BIC are worse than for mod2BIC and mod2AIC
+```
+
+
+Compare models (based on modBIC) using ANOVA
+
+```{r}
+anova(mod2, mod1) # mod1 is NOT better than mod2
+
+modBestFull1 <- mod2
+```
+
+## AGAIN, BUT WITH modAIC (just in case) ##
+
+```{r}
+## Starting with modAIC ##
+mod1 <- modAIC
+## Recursively remove non-significant variables ##
+all_vars <- names(mod1[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod1)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod1 <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod1)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod1) ## NO INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod1) # moderate/high multicolinearity
+AIC(mod1)
+BIC(mod1)
+```
+
+```{r}
+mod2 <- mod1
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod2)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod2 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod2)
+}
+summary(mod2) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod2) # no multicolinearity
+AIC(mod2)
+BIC(mod2)
+```
+
+
+```{r}
+mod3 <- modAIC
+## Recursively remove variables with VIF > 4 ##
+all_vifs <- vif(mod3)
+signif_all <- names(all_vifs)
+
+# Remove vars with VIF> 4 and re-build model until none of VIFs don't exceed 4.
+while(any(all_vifs > 4)){
+  var_with_max_vif <- names(which(all_vifs == max(all_vifs)))  # get the var with max vif
+  signif_all <- signif_all[!(signif_all) %in% var_with_max_vif]  # remove
+  myForm <- as.formula(paste("plan ~ ", paste (signif_all, collapse=" + "), sep=""))  # new formula
+  mod3 <- lm(myForm, data=df)  # re-build model with new formula
+  all_vifs <- car::vif(mod3)
+}
+summary(mod3) ## THIS WILL HAVE NO MULTICOLINEARITY BUT SOME INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod3) # no multicolinearity
+AIC(mod3)
+BIC(mod3) 
+```
+
+```{r}
+## Starting with mod1 ##
+mod4 <- mod3
+## Recursively remove non-significant variables ##
+all_vars <- names(mod4[[1]])[-1]  # names of all X variables
+# Get the non-significant vars
+summ <- summary(mod4)  # model summary
+pvals <- summ[[4]][, 4]  # get all p values
+not_significant <- character()  # init variables that aren't statsitically significant
+not_significant <- names(which(pvals > 0.1))
+not_significant <- not_significant[!not_significant %in% "(Intercept)"]  # remove 'intercept'. Optional!
+
+# If there are any non-significant variables, 
+while(length(not_significant) > 0){
+  all_vars <- all_vars[!all_vars %in% not_significant[1]]
+  myForm <- as.formula(paste("plan ~ ", paste (all_vars, collapse=" + "), sep=""))  # new formula
+  mod4 <- lm(myForm, data=df)  # re-build model with new formula
+  
+  # Get the non-significant vars.
+  summ <- summary(mod4)
+  pvals <- summ[[4]][, 4]
+  not_significant <- character()
+  not_significant <- names(which(pvals > 0.1))
+  not_significant <- not_significant[!not_significant %in% "(Intercept)"]
+}
+summary(mod4) ## NO MULTICOLINEARITY NOR INSIGNIFICANT VARIABLES ##
+```
+
+```{r}
+vif(mod4) # no multicolinearity
+AIC(mod4)
+BIC(mod4) 
+```
+
+Compare all models (based on mod2BIC) using ANOVA
+
+```{r}
+## models were not all fitted to the same size of dataset
+compareCoefs(mod1, mod4) # mod1 has many more predictors than mod4
+modBestFull2 <- mod4
+```
+
+```{r}
+# models were not all fitted to the same size of dataset
+anova(modBestFull1, modBestFull2) # ERROR #
+# By R-squared, BIC, and AIC, modBestFull2 is better
+modBestFull <- modBestFull2
+```
+
+## 3 LINEAR MODELS ##
+All have no multicolinearity
+
+```{r}
+summary(modBestBudget)
+BIC(modBestBudget)
+AIC(modBestBudget)
+```
+
+
+```{r}
+summary(modBestCovid)
+BIC(modBestCovid)
+AIC(modBestCovid)
+```
+
+
+```{r}
+summary(modBestFull)
+BIC(modBestFull)
+AIC(modBestFull)
+```
+
+
+```{r}
+compareCoefs(modBestBudget, modBestCovid, modBestFull)
+```
+
+WE STILL NEED TO TEST FOR MIXED EFFECT MODELS.

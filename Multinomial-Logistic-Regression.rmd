@@ -1,0 +1,158 @@
+---
+title: "Multinomial Logistic Regression"
+author: "Yixiao (Carl) Cao"
+date: "May 26, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+library(rattle.data)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(recipes)
+library(caret)
+library(MASS)
+library(nnet)
+library(leaps)
+library(lme4)
+library(ggplot2)
+library(reshape2)
+library(foreign)
+fulldata <- read.csv("Dataframe_Draft.csv")
+#str(fulldata)
+```
+
+```{r}
+#See which variables are all NAs
+sapply(fulldata, function(x)all(is.na(x)))
+
+na.test <-  function (x) {
+  w <- sapply(x, function(x)all(is.na(x)))
+  if (any(w)) {
+    stop(paste("All NA in columns", paste(which(w), collapse=", ")))
+  }
+}
+
+#Find column names with NAs
+#colnames(fulldata)[colSums(is.na(fulldata)) > 0]
+```
+
+```{r}
+#some further cleaning?
+fulldata <- fulldata[fulldata$plan=='Planning for in-person'|fulldata$plan=='Planning for online'|
+           fulldata$plan=='Proposing a hybrid model'|fulldata$plan=='Waiting to decide'|
+             fulldata$plan=='Considering a range of scenarios',]
+#keeps <- c("plan", "alloncam", "room", "Tuition", "state", "Total_Asset", "distcrs", "dstnugc",
+#           "Size", "rmbrdamt", "cbsatype", "Enrollment", "internationals","distnced", "Total_Expense", "cases.x",
+#          "deaths.x","hospital", "hbcu","sector","iclevel","c18ugprf","slo7","hloffer","locale","board","tuition1",
+#           "tuition3")
+
+#partdata <- fulldata[keeps]
+#partdata <- subset(fulldata, select=-c(county.deaths, deaths.y))
+
+
+#Remove columns with more than 50% NAs
+partdata <- fulldata[which(colMeans(!is.na(fulldata)) > 0.91)]
+partdata <- na.omit(partdata) #have to do this for now
+#str(partdata)
+
+#look at the factor variables:
+is.fact <- sapply(partdata, is.factor)
+factors.df <- partdata[, is.fact]
+
+#remove institution name ,county, and state names
+partdata <- subset(partdata, select=-c(institution, state, city, countynm))
+
+```
+
+```{r}
+# Using sample_frac to create 7:3 split into test and train
+train <- sample_frac(partdata, 0.7)
+sample_id <- as.numeric(rownames(train))
+test <- partdata[-sample_id, ]
+```
+
+```{r}
+#setting the baseline
+train$plan <- relevel(train$plan, ref = "Waiting to decide")
+```
+
+```{r, include=FALSE}
+full.model <- multinom(plan ~ ., data = train, MaxNWt=100000)
+#summary(full.model)
+step.model <- stepAIC(full.model, direction = "both", 
+                      trace = FALSE)
+#summary(step.model)
+```
+
+
+```{r, include=FALSE}
+models <- regsubsets(plan~., data = train, nvmax = 6,
+                     method = "seqrep")
+summary(models)
+```
+
+```{r}
+final.model <- multinom(plan ~ sanit11 + sa11mot_2 + saeq9at_1 + state.deaths + alloncam + distcrs + f1systyp, data = train, MaxNWt=100000)
+summary(final.model)
+```
+
+
+reference : https://rstudio-pubs-static.s3.amazonaws.com/237448_25448d1a60d24e599e9531bf76c39f20.html
+
+```{r}
+# Accuracy of train data
+predictiontrain <- predict(full.model, train, na.action =na.pass, type="probs")
+predicted_classtrain <- predict(full.model, train)
+caret::confusionMatrix(as.factor(predicted_classtrain), as.factor(test$plan))
+```
+
+```{r}
+# Accuracy on test data
+predictiontest <- predict(final.model, test, na.action=na.pass, type="probs")
+predicted_classtest <- predict(final.model, test)
+caret::confusionMatrix(as.factor(predicted_classtest), as.factor(test$plan))
+```
+
+```{r}
+twopred.model<- multinom(plan ~ saeq9at_1 + distcrs, data = train, MaxNWt=100000)
+```
+
+```{r}
+#Test multicolinearity for the model
+library(car)
+car::vif(final.model)
+```
+
+```{r}
+#visualization of the multinomial model
+library(effects) 
+plot(Effect("state.deaths",final.model))  #shows predictions with confidence bands
+plot(Effect("state.deaths",final.model),multiline=T) #shows multiple lines of predictions in the same plot 
+plot(Effect("state.deaths",final.model),style="stacked") # shows a stacked vertical bar chart of predictions 
+```
+
+```{r}
+#visualization of the two-variable model
+xgrid <- zgrid <- seq(-5, 5, length.out = 50)
+data.fit <- expand.grid( saeq9at_1= xgrid, distcrs = zgrid)
+p <- matrix(predict(twopred.model, data.fit, type = "probs"), ncol = 50, nrow = 50, byrow = T)
+
+library(plotly)
+# visualize this with simple logistic regression(open and close)
+plot_ly(test, saeq9at_1 = ~saeq9at_1, distcrs = ~plan, plan = ~plan, type = "scatter3d", 
+        mode = "markers", marker = list(size = 2)) %>%
+  add_surface(saeq9at_1= xgrid, distcrs = zgrid, z = p) %>%
+  layout(title = "Two variable probability model",
+         scene = list(
+           xaxis = list(title = "x"), 
+           yaxis = list(title = "z"), 
+           zaxis = list(title = "probability")))
+```
+

@@ -1,0 +1,910 @@
+---
+title: "DataFest2020"
+author: "Adam Chapnik"
+date: "5/22/2020"
+output: html_document
+---
+Once all the following files are cleaned, they need to be merged. Use the "merge" function. This is NOT included in this script.
+
+```{r include=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(states)
+library(magrittr)
+library(fuzzyjoin)
+library(USAboundaries)
+library(RCurl)
+```
+
+```{r include=FALSE}
+## This is just how my downloaded version of R requires me to read in files ##
+df <- read_csv("~/Desktop/College Fall Decisions.csv") ## NEEDS UPDATING (pull from desktop)
+#########################################################################
+# IN ORDER TO RUN THIS CODE, delete "~/Desktop/" in line 21, 37, and 38 #
+#########################################################################
+write.csv(df, "College Fall Decisions.csv")
+df1 <- read_csv("Directory Information.csv")
+df2 <- read_csv("Educational offerings, organization, services and athletic associations.csv")
+df3 <- read_csv("Student charges for academic year programs.csv")
+df4 <- read_csv("Race and ethnicity, gender, attendance status, and level of student - Fall 2018.csv")
+df5 <- read_csv("Residence and migration of first-time freshman - Fall 2018.csv")
+df6 <- read_csv("Distance education status and level of student - Fall 2018.csv")
+df7 <- read_csv("Total entering class, retention rates, and student-to-faculty ratio - Fall 2018.csv")
+df8 <- read_csv("Student financial aid and net price - 2017-18.csv")
+df9 <- read_csv("Number and salary outlays for full-time nonmedical instructional staff, by gender, and academic rank - Academic year 2018-19.csv")
+df10 <- read_csv("Number and salary outlays for full-time nonmedical noninstructional staff by occupation - Academic year 2018-19.csv")
+df11 <- read_csv("Number of staff by occupational category, faculty and tenure status - Fall 2018.csv")
+df12 <- read_csv("~/Desktop/College Finances (original, from Carl).csv") ## Use code from Carl to clean real original
+df13 <- read_csv("~/Desktop/Furloughs and Layoffs.csv") ## NEEDS UPDATING (pull froms desktop)
+write.csv(df13, "Furloughs and Layoffs.csv")
+```
+
+
+```{r include=FALSE}
+## Cleaning df ##
+df <- df[complete.cases(df), ]
+x <- df$Category
+b <- gsub("<a href=\"","", x)
+b <- gsub("</a>","", b)
+b <- gsub("\" target=\"_blank\" rel=\"nofollow noopener noreferrer\"","", b)
+a <- gsub(">Planning for in-person","", b)
+a <- gsub(">Proposing a hybrid model","", a)
+a <- gsub(">Planning for online","", a)
+a <- gsub(">Considering a range of scenarios","", a)
+a <- gsub("Link","", a)
+a <- gsub("NA","", a)
+a <- gsub("null","", a)
+urls <- gsub(">Waiting to decide","", a)
+plan <- gsub(".*>","",b)
+institution <- df$Institution
+institution <- gsub(" — ","-", institution)
+state <- df$State
+## Convert the vectors from the original df into a clean df ##
+mydata <- as.data.frame(cbind(institution, state, plan, urls))
+write.csv(mydata, "College Plans.csv")
+```
+
+```{r include=FALSE}
+#############################################
+## Fixes names of state university systems ##
+#############################################
+mydata <- read_csv("~/Desktop/College-Plans_withText8.csv")
+write.csv(mydata, "College-Plans_updatedNames5.csv")
+```
+
+
+```{r eval=FALSE, include=FALSE}
+################################################
+## DO NOT INCLUDE - NOT ENOUGH DATA AVAILABLE ##
+################################################
+###########################################
+## Fix names of state university systems ##
+###########################################
+## Cleaning df13 ##
+x <- df13$Institution
+b <- gsub("<a href=\"","", x)
+b <- gsub("</a>","", b)
+b <- gsub("\" target=\"_blank\" rel=\"nofollow noopener noreferrer\"","", b)
+institution <- gsub(".*>","",b)
+urls <- sub(">.*$","",b)
+a <- df13$`Number of employees affected`
+a <- gsub("〜", "", a)
+no.staff.affected <- gsub("Not available", "NA", a)
+no.staff.affected <- as.double(no.staff.affected)
+type.staff.affected <- df13$`Type of employee affected`
+action <- df13$Action
+mydata13 <- as.data.frame(cbind(institution, no.staff.affected, type.staff.affected, action, urls))
+
+# no.faculty_
+no.faculty_clean <- function(x){
+  faculty <- filter(mydata13, type.staff.affected == "Faculty" & action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.faculty_x <- faculty$no.staff.affected
+  faculty$type.staff.affected <- NULL
+  no.faculty <- cbind(faculty, no.faculty_x)[,-2]
+   return(no.faculty)
+}
+rename_columns1 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.faculty_clean)
+a <- a[[x]]
+b <- paste0("no.faculty_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns1)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.faculty <- b
+
+# no.other
+no.other_clean <- function(x){
+  other <- filter(mydata13, type.staff.affected == "Unspecified" | type.staff.affected == "Staff" | type.staff.affected == "Other Staff") %>% filter(action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.other_x <- other$no.staff.affected
+  other$type.staff.affected <- NULL
+  no.other <- cbind(other, no.other_x)[,-2]
+   return(no.other)
+}
+rename_columns2 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.other_clean)
+a <- a[[x]]
+b <- paste0("no.other_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns2)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.other <- b
+
+# no.admin_other
+no.admin_other_clean <- function(x){
+  admin_other <- filter(mydata13, type.staff.affected == "Administrators; Other Staff" & action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.admin_other_x <- admin_other$no.staff.affected
+  admin_other$type.staff.affected <- NULL
+  no.admin_other <- cbind(admin_other, no.admin_other_x)[,-2]
+   return(no.admin_other)
+}
+rename_columns3 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.admin_other_clean)
+a <- a[[x]]
+b <- paste0("no.admin_other_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns3)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.admin_other <- b
+
+# no.faculty_other
+no.other_clean <- function(x){
+  faculty_other <- filter(mydata13, type.staff.affected == "Faculty; Other Staff" | type.staff.affected == "Faculty; Unspecified") %>% filter(action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.faculty_other_x <- faculty_other$no.staff.affected
+  faculty_other$type.staff.affected <- NULL
+  no.faculty_other <- cbind(faculty_other, no.faculty_other_x)[,-2]
+   return(no.faculty_other)
+}
+rename_columns2 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.other_clean)
+a <- a[[x]]
+b <- paste0("no.faculty_other_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns2)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.faculty_other <- b
+
+# no.admin
+no.other_clean <- function(x){
+  admin <- filter(mydata13, type.staff.affected == "Administrators") %>% filter(action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.admin_x <- admin$no.staff.affected
+  admin$type.staff.affected <- NULL
+  no.admin <- cbind(admin, no.admin_x)[,-2]
+   return(no.admin)
+}
+rename_columns2 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.other_clean)
+a <- a[[x]]
+b <- paste0("no.admin_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns2)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.admin <- b
+
+# no.all
+no.other_clean <- function(x){
+  all <- filter(mydata13, type.staff.affected == "Administrators; Faculty; Other Staff") %>% filter(action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.all_x <- all$no.staff.affected
+  all$type.staff.affected <- NULL
+  no.all <- cbind(all, no.all_x)[,-2]
+   return(no.all)
+}
+rename_columns2 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.other_clean)
+a <- a[[x]]
+b <- paste0("no.all_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns2)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.all <- b
+
+# no.admin_faculty
+no.other_clean <- function(x){
+  admin_faculty <- filter(mydata13, type.staff.affected == "Administrators; Faculty") %>% filter(action == x) %>%       select("institution","no.staff.affected","type.staff.affected") 
+  no.admin_faculty_x <- admin_faculty$no.staff.affected
+  admin_faculty$type.staff.affected <- NULL
+  no.admin_faculty <- cbind(admin_faculty, no.admin_faculty_x)[,-2]
+   return(no.admin_faculty)
+}
+rename_columns2 <- function(x){
+actions <- unique(mydata13$action)
+actions <- as.vector(actions)
+a <- lapply(actions, no.other_clean)
+a <- a[[x]]
+b <- paste0("no.admin_faculty_", x)
+colnames(a)[2] <- b
+return(a)
+}
+action.list <- c(1:length(unique(mydata13$action)))
+a <- lapply(action.list, rename_columns2)
+mergeCols <- c("institution")
+b <- full_join(a[[1]],a[[2]], by = mergeCols)
+b <- full_join(b,a[[3]], by = mergeCols)
+b <- full_join(b,a[[4]], by = mergeCols)
+b <- full_join(b,a[[5]], by = mergeCols)
+b <- full_join(b,a[[6]], by = mergeCols)
+no.admin_faculty <- b
+
+# merge
+b <- full_join(no.faculty,no.other, by = mergeCols)
+b <- full_join(b,no.admin_faculty, by = mergeCols)
+b <- full_join(b,no.admin_other, by = mergeCols)
+b <- full_join(b,no.admin, by = mergeCols)
+b <- full_join(b,no.faculty_other, by = mergeCols)
+mydata13 <- full_join(b,no.all, by = mergeCols)
+write.csv(mydata13, "~/Desktop/Furloughs and Layoffs_cleaned.csv")
+```
+
+
+
+```{r include=FALSE}
+## Cleaning df12
+x <- df12$County
+df12 <- df12[ , !(names(df12) %in% "County")]
+County <- gsub(" County","", x)
+mydata12 <- cbind(df12, County)
+colnames(mydata12)[3] <- "institution"
+colnames(mydata12)[2] <- "id"
+mydata12$X1 <- NULL
+mydata12$State <- NULL
+mydata12$ZIP <- NULL
+mydata12$institution <- NULL
+mydata12$id <- as.factor(as.character(mydata12$id))
+```
+
+```{r include=FALSE}
+## Pulling useful variables from df1 ##
+id <- df1$UNITID
+institution <- df1$INSTNM
+address <- df1$ADDR
+city <- df1$CITY
+state <- df1$STABBR
+fips <- df1$FIPS
+zip <- df1$ZIP
+sector <- df1$SECTOR
+iclevel <- df1$ICLEVEL
+hloffer <- df1$HLOFFER
+ugoffer <- df1$UGOFFER
+groffer <- df1$GROFFER
+deggrant <- df1$DEGGRANT
+hbcu <- df1$HBCU
+hospital <- df1$HOSPITAL
+tribal <- df1$TRIBAL
+locale <- df1$LOCALE
+openpubl <- df1$OPENPUBL
+cyactive <- df1$CYACTIVE
+rptmth <- df1$RPTMTH
+c18ugprf <- df1$C18UGPRF
+c18szset <- df$C18SZSET
+f1systyp <- df1$F1SYSTYP
+cbsatype <- df1$CBSATYPE
+countycd <- df1$COUNTYCD
+countynm <- df1$COUNTYNM
+countynm <- gsub(" County","",countynm)
+## Bind vectors into dataframe ##
+mydata1 <- as.data.frame(cbind(id, institution, address, city, state, fips, zip, sector, iclevel, hloffer, ugoffer, groffer, deggrant, hbcu, hospital, tribal, locale, openpubl, cyactive, rptmth, c18ugprf, c18szset, f1systyp, cbsatype, countycd, countynm))
+mydata12$id <- as.factor(as.character(mydata12$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df2 ##
+id <- df2$UNITID
+rellafil <- df2$RELAFFIL
+calsys <- df2$CALSYS
+openadmp <- df2$OPENADMP
+slo7 <- df2$SLO7
+slo9 <- df2$SLO9
+tuitpl <- df2$TUITPL
+dstnugc <- df2$DSTNUGC
+dstnugp <- df2$DSTNUGP
+dstngc <- df2$DSTNGC
+dstngp <- df2$DSTNGP
+distcrs <- df2$DISTCRS
+distpgs <- df2$DISTPGS
+dstnced1 <- df2$DSTNCED1
+dstnced2 <- df2$DSTNCED2
+distnced <- df2$DISTNCED
+disabpct <- df2$DISABPCT
+alloncam <- df2$ALLONCAM
+room <- df2$ROOM
+roomcap <- df2$ROOMCAP
+board <- df2$BOARD
+mealswk <- df2$MEALSWK
+roomamt <- df2$ROOMAMT
+boardamt <- df2$BOARDAMT
+rmbrdamt <- df2$RMBRDAMT
+mydata2 <- as.data.frame(cbind(id, rellafil, calsys, openadmp, slo7, slo9, tuitpl, dstnugc, dstnugp, dstngc, dstngp, distcrs, distpgs, dstnced1, dstnced2, distnced, disabpct, alloncam, room, roomcap, board, mealswk, roomamt, boardamt, rmbrdamt))
+```
+
+```{r include=FALSE}
+## Pulling useful variables from df3 ##
+id <- df3$UNITID
+tuition1 <- df3$TUITION1
+hrchg1 <- df3$HRCHG1
+tuition2 <- df3$TUITION2
+hrchg2 <- df3$HRCHG2
+tuition3 <- df3$TUITION3
+hrchg3 <- df3$HRCHG3
+tuition5 <- df3$TUITION5
+hrchg5 <- df3$HRCHG5
+tuition6 <- df3$TUITION6
+hrchg6 <- df3$HRCHG6
+tuition7 <- df3$TUITION7
+hrchg7 <- df3$HRCHG7
+chg1at3 <- df3$CHG1AT3
+chg1ay3 <- df3$CHG1AY3
+chg2at3 <- df3$CHG2AT3
+chg2ay3 <- df3$CHG2AY3
+chg3at3<- df3$CHG3AT3
+chg3ay3 <- df3$CHG3AY3
+chg7ay3 <- df3$CHG7AY3  
+chg8ay3<- df3$CHG8AY3
+chg9ay3 <- df3$CHG9AY3  
+mydata3 <- as.data.frame(cbind(id, tuition1, hrchg1, tuition2, hrchg2, tuition3, hrchg3, tuition5, hrchg5, tuition6, hrchg6, tuition7, hrchg7, chg1at3, chg1ay3, chg2at3, chg2ay3, chg3at3, chg3ay3, chg7ay3, chg8ay3, chg9ay3))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df4 ##
+
+df4.faster <- function(x){
+dfx <- filter(df4, EFALEVEL == x)
+id <- dfx$UNITID
+eftotlt <- dfx$EFTOTLT
+name <- paste0("eftotlt", "_", x)
+colnames(dfx)[8] <- name
+
+
+mydata.x <- as.data.frame(cbind(id, dfx[8]))
+return(mydata.x)
+}
+
+vec <- c(1,2,12,21,22,32,41,42,52)
+list <- lapply(vec, df4.faster)
+
+mergeCols <- c("id")
+mydata4 <- left_join(list[[1]], list[[2]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[3]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[4]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[5]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[6]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[7]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[8]], by = mergeCols)
+mydata4 <- left_join(mydata4, list[[9]], by = mergeCols)
+mydata4$id <- as.factor(as.character(mydata4$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df5 ##
+id <- df1$UNITID # df5 has repeats in institutions
+efcstate <- df5$EFCSTATE
+efcres02 <- df5$EFRES02
+
+# Sums number of general locations students reside in per institution (see efcstate for categories)
+states <- function(x){
+  a <- unique(id)[x]
+  df <- filter(df5, UNITID == a)
+  number.states <- nrow(df)
+  return(number.states)
+}
+x <- c(1:length(unique(id)))
+number_locations <- unlist(lapply(x, states))
+
+                                                     #############################################
+international <- filter(df5, efcstate == 90)[c(2,8)] ## Add variable as ratio of total students ##
+colnames(international)[1] <- "id"                   #############################################
+colnames(international)[2] <- "internationals"
+mydata5 <- as.data.frame(cbind(id, number_locations))
+mydata5$id <- as.factor(as.character(mydata5$id))
+international$id <- as.factor(as.character(international$id))
+mydata5 <- left_join(mydata5, international, by = mergeCols)
+mydata5$id <- as.factor(as.character(mydata5$id))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#################################################################################
+## Calculate distribution of students using trapezoidal integral approximation ##
+#################################################################################
+library(pracma)
+distribution_1 <- function(X){
+  a <- unique(id)[X]
+  df <- filter(df5, UNITID == a)
+  reorder <- arrange(df, desc(EFRES02))
+  reorder <- na.omit(reorder, cols = EFRES02)
+  row <- filter(mydata1, id == a)
+  fips <- row$fips
+  vert <- filter(df, EFCSTATE == fips)$EFRES02
+  categories <- length(unique(df5$EFCSTATE))
+  y <- reorder$EFRES02
+  a <- categories - length(y)
+  a <- rep(0, times = a)
+  y <- c(y, a) - vert
+  x <- c(1:categories)
+  test <- trapz(x, y)
+  
+  return(test)
+}
+distribution_1(1)
+########################
+# STILL NEED TO FINISH #
+########################
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df6 ##
+df6.faster <- function(x){
+dfx <- filter(df6, EFDELEV == x)
+id <- dfx$UNITID
+name <- paste0("efdetot", "_", x)
+colnames(dfx)[5] <- name
+name <- paste0("efdeexc", "_", x)
+colnames(dfx)[7] <- name
+name <- paste0("efdesom", "_", x)
+colnames(dfx)[9] <- name
+name <- paste0("efdeex1", "_", x)
+colnames(dfx)[13] <- name
+name <- paste0("efdeex2", "_", x)
+colnames(dfx)[15] <- name
+name <- paste0("efdeex3", "_", x)
+colnames(dfx)[17] <- name
+name <- paste0("efdeex4", "_", x)
+colnames(dfx)[19] <- name
+name <- paste0("efdeex5", "_", x)
+colnames(dfx)[21] <- name
+mydata.x <- as.data.frame(cbind(id, dfx[5], (dfx)[7], (dfx)[9], (dfx)[13], (dfx)[15], (dfx)[17], (dfx)[19], (dfx)[21]))
+return(mydata.x)
+}
+vec <- c(1,2,3,12)
+list <- lapply(vec, df6.faster)
+
+mydata6 <- left_join(list[[1]], list[[2]], by = mergeCols)
+mydata6 <- left_join(mydata6, list[[3]], by = mergeCols)
+mydata6 <- left_join(mydata6, list[[4]], by = mergeCols)
+mydata6$id <- as.factor(as.character(mydata6$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df7 ##
+id <- df7$UNITID
+grcohrt <- df7$GRCOHRT
+ugentern <- df7$UGENTERN
+pgrcohrt <- df7$PGRCOHRT
+rrftex <- df7$RRFTEX
+rrftin <- df7$RRFTIN
+rrftcta <- df7$RRFTCTA
+ret_pcf <- df7$RET_PCF
+rrptct <- df7$RRPTCT
+rrptcta <- df7$RRPTCTA
+ret_pcp <- df7$RET_PCP
+stufacr <- df7$STUFACR
+mydata7 <- as.data.frame(cbind(id, grcohrt, ugentern, pgrcohrt, rrftex, rrftin, rrftcta, ret_pcf, rrptct, rrptcta, ret_pcp, stufacr))
+mydata7$id <- as.factor(as.character(mydata7$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df8 ##
+id <- df8$UNITID
+scfa1n <- df8$SCFA1N
+scfa11p <- df8$SCFA11P
+scfa12p <- df8$SCFA12P
+scfa13p <- df8$SCFA13P
+scfy11p <- df8$SCFY11P
+scfy12p <- df8$SCFY12P
+scfy13p <- df8$SCFY13P
+uagrntp <- df8$UAGRNTP
+uagrntt <- df8$UAGRNTT
+uagrnta <- df8$UAGRNTA
+anyaidp <- df8$ANYAIDP
+aidfsip <- df8$AIDFSIP
+gistt2 <- df8$GISTT2
+mydata8 <- as.data.frame(cbind(id, scfa1n, scfa11p, scfa12p, scfa13p, scfy11p, scfy12p, scfy13p, uagrntp, uagrntt, uagrnta, anyaidp, aidfsip, gistt2))
+mydata8$id <- as.factor(as.character(mydata8$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df9 ##
+df9.faster <- function(x){
+dfx <- filter(df9, ARANK == x)
+id <- dfx$UNITID
+name <- paste0("sainstt", "_", x)
+colnames(dfx)[5] <- name
+name <- paste0("sa_9mct", "_", x)
+colnames(dfx)[11] <- name
+name <- paste0("satotlt", "_", x)
+colnames(dfx)[17] <- name
+name <- paste0("sa09mct", "_", x)
+colnames(dfx)[23] <- name
+name <- paste0("sa10mct", "_", x)
+colnames(dfx)[29] <- name
+name <- paste0("sa11mct", "_", x)
+colnames(dfx)[35] <- name
+name <- paste0("sa12mct", "_", x)
+colnames(dfx)[41] <- name
+name <- paste0("saoutlt", "_", x)
+colnames(dfx)[47] <- name
+name <- paste0("sa09mot", "_", x)
+colnames(dfx)[53] <- name
+name <- paste0("sa10mot", "_", x)
+colnames(dfx)[59] <- name
+name <- paste0("sa11mot", "_", x)
+colnames(dfx)[65] <- name
+name <- paste0("sa12mot", "_", x)
+colnames(dfx)[71] <- name
+name <- paste0("saeq9ot", "_", x)
+colnames(dfx)[77] <- name
+name <- paste0("saeq9at", "_", x)
+colnames(dfx)[83] <- name
+name <- paste0("sa09mat", "_", x)
+colnames(dfx)[89] <- name
+name <- paste0("sa10mat", "_", x)
+colnames(dfx)[95] <- name
+name <- paste0("sa11mat", "_", x)
+colnames(dfx)[101] <- name
+name <- paste0("sa12mat", "_", x)
+colnames(dfx)[107] <- name
+mydata.x <- as.data.frame(cbind(id, (dfx)[5], (dfx)[11], (dfx)[17], (dfx)[23], (dfx)[29], (dfx)[35], (dfx)[41], (dfx)[47], (dfx)[53], (dfx)[59], (dfx)[65], (dfx)[71], (dfx)[77], (dfx)[83], (dfx)[89], (dfx)[95], (dfx)[101], (dfx)[107]))
+return(mydata.x)
+}
+vec <- c(7,1,2,3,4,5,6)
+list <- lapply(vec, df9.faster)
+mergeCols <- c("id")
+mydata9 <- left_join(list[[1]], list[[2]], by = mergeCols)
+mydata9 <- left_join(mydata9, list[[3]], by = mergeCols)
+mydata9 <- left_join(mydata9, list[[4]], by = mergeCols)
+mydata9 <- left_join(mydata9, list[[5]], by = mergeCols)
+mydata9 <- left_join(mydata9, list[[6]], by = mergeCols)
+mydata9 <- left_join(mydata9, list[[7]], by = mergeCols)
+mydata9$id <- as.factor(as.character(mydata9$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df10 ##
+id <- df10$UNITID
+sanin01 <- df10$SANIN01
+sanin02 <- df10$SANIN02
+sanin03 <- df10$SANIN03
+sanin04 <- df10$SANIN04
+sanin05 <- df10$SANIN05
+sanin06 <- df10$SANIN06
+sanin07 <- df10$SANIN07
+sanin08 <- df10$SANIN08
+sanin09 <- df10$SANIN09
+sanin10 <- df10$SANIN10
+sanin11 <- df10$SANIN11
+sanin12 <- df10$SANIN12
+sanin13 <- df10$SANIN13
+sanin14 <- df10$SANIN14
+sanit01 <- df10$SANIT01
+sanit02 <- df10$SANIT02
+sanit03 <- df10$SANIT03
+sanit04 <- df10$SANIT04
+sanit05 <- df10$SANIT05
+sanit06 <- df10$SANIT06
+sanit07 <- df10$SANIT07
+sanit08 <- df10$SANIT08
+sanit09 <- df10$SANIT09
+sanit10 <- df10$SANIT10
+sanit11 <- df10$SANIT11
+sanit12 <- df10$SANIT12
+sanit13 <- df10$SANIT13
+sanit14 <- df10$SANIT14
+mydata10 <- as.data.frame(cbind(id, sanin01 , sanin02, sanin03, sanin04, sanin05, sanin06, sanin07, sanin08, sanin09, sanin10, sanin11, sanin12, sanin13, sanin14, sanit01, sanit02, sanit03, sanit04, sanit05, sanit06, sanit07, sanit08, sanit09, sanit10, sanit11, sanit12, sanit13, sanit14))
+mydata10$id <- as.factor(as.character(mydata10$id))
+```
+
+
+```{r include=FALSE}
+## Pulling useful variables from df11 ##
+df11.faster <- function(x){
+dfx <- filter(df11, EAPCAT == x)
+id <- dfx$UNITID
+name <- paste0("eaptot", "_", x)
+colnames(dfx)[7] <- name
+name <- paste0("eappt", "_", x)
+colnames(dfx)[19] <- name
+mydata.x <- as.data.frame(cbind(id, dfx[7], dfx[19]))
+return(mydata.x)
+}
+vec <- c(10000, 10050, 27000, 30000, 37000, 10010, 10020, 10030)
+list <- lapply(vec, df11.faster)
+
+mydata11 <- left_join(list[[1]], list[[2]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[3]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[4]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[5]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[6]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[7]], by = mergeCols)
+mydata11 <- left_join(mydata11, list[[8]], by = mergeCols)
+mydata11$id <- as.factor(as.character(mydata11$id))
+```
+
+
+```{r include=FALSE}
+## Merge all datasets ##
+mergeCols <- c("institution")
+data <- left_join(mydata, mydata1, by = mergeCols)
+```
+
+```{r eval=FALSE, include=FALSE}
+#################################################################
+## ONCE "mydata13" IS FIXED RUN THIS - IF NOT, DO NOT RUN THIS ##
+data <- left_join(data, mydata13, by = mergeCols)
+```
+
+```{r include=FALSE}
+mergeCols <- c("id")
+data <- left_join(data, mydata12, by = mergeCols)
+data <- left_join(data, mydata2, by = mergeCols)
+data <- left_join(data, mydata3, by = mergeCols)
+data <- left_join(data, mydata4, by = mergeCols)
+data <- left_join(data, mydata5, by = mergeCols)
+data <- left_join(data, mydata6, by = mergeCols)
+data <- left_join(data, mydata7, by = mergeCols)
+data <- left_join(data, mydata8, by = mergeCols)
+data <- left_join(data, mydata9, by = mergeCols)
+data <- left_join(data, mydata10, by = mergeCols)
+data <- left_join(data, mydata11, by = mergeCols)
+```
+
+
+```{r}
+nrow(data) ## Number rows in "data"
+test <- data %>% filter(is.na(id)) ## df of rows with NA in "id"
+write.csv(test, "~/Desktop/ErrorstTest.csv") 
+nrow(test) ## Number rows with NA in "id"
+test1 <- data %>% filter(!is.na(id)) ## df of rows with NAs in "id" *removed*
+nrow(test1) ## Number rows without NA in "id"
+length(unique(test1$id)) ## Number unique id's of rows without NA in "id"
+test2 <- test1 %>% group_by(id) %>% filter(n()==1) ## df of rows *without* NA in "id" and only unique "id"s 
+data <- test2 ## THIS IS THE BEST IT GETS ##
+nrow(test2) ## Number rows *without* NA in "id" and only unique "id"s 
+test3 <- test1 %>% group_by(id) %>% filter(n()>1) ## df of rows *without* NA in "id" and repeated "id"s
+nrow(test3) ## Number rows *without* NA in "id" and repeated "id"s
+```
+
+
+```{r include=FALSE}
+## Clean final dataframe ##
+data$text_length <- NULL
+data$institution_1 <- NULL
+data$text <- NULL
+data$`Unnamed: 0` <- NULL
+data$`Unnamed: 0.1` <- NULL
+data$`Unnamed: 0.1.1` <- NULL
+data$no <- NULL
+data$state.y <- NULL
+data$County <- NULL
+data <- data %>% select_if(colSums(!is.na(.)) > 0) ## deletes columns with all NA
+colnames(data)[2] <- "state"
+```
+
+```{r include=FALSE}
+## Merge with COVID-19 data ##
+x <- getURL("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv")
+y <- read.csv(text = x)
+write.csv(y, "us_states.csv")
+
+x <- getURL("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv")
+y <- read.csv(text = x)
+write.csv(y, "us_counties.csv")
+
+us.states <- read_csv("us_states.csv")
+us.counties <- read_csv("us_counties.csv")
+
+us.states <- filter(us.states, date == as.vector(tail(us.states)[6,2]))
+counties.cases <- filter(us.counties, date == as.vector(tail(us.counties)[6,2]))
+
+state_codes <- state_codes
+states.df <- state_codes[,c(1,2)]
+colnames(states.df)[1] <- "state"
+
+mergeCols <- c("state")
+states.cases <- left_join(as.data.frame(us.states), as.data.frame(states.df), by = mergeCols)
+states.cases$state <- NULL
+colnames(states.cases)[6] <- "state"
+states.cases <- states.cases %>% dplyr::select("cases","deaths","state")
+
+counties.cases <- counties.cases %>% dplyr::select("cases","deaths","fips")
+counties.cases$fips <- as.factor(as.character(counties.cases$fips))
+colnames(counties.cases)[3] <- "countycd"
+
+mergeCols <- c("state")
+data <- left_join(data, states.cases, by = mergeCols)
+mergeCols <- c("countycd")
+data <- left_join(data, counties.cases, by = mergeCols)
+```
+
+
+```{r include=FALSE}
+data <- data %>% dplyr::select("institution","state","plan","city","sector","ugoffer","groffer","hbcu","hospital","tribal","locale","c18ugprf","f1systyp","countynm","Size","Application","Enrollment","Endowment","Total_Expense","Total_Revenue","Total_Liabilities","Tuition","Total_Asset","Type","Gift","rellafil","calsys","slo7","dstnugc","dstngc","distcrs","distnced","disabpct","alloncam","room","roomcap","board","tuition1","tuition2","tuition3","tuition5","tuition6","tuition7","eftotlt_1","eftotlt_2","eftotlt_12","eftotlt_21","eftotlt_22","eftotlt_32","eftotlt_41","eftotlt_42","eftotlt_52","number_locations","internationals","efdeexc_1","efdeexc_2","efdeexc_3","efdeexc_12","efdesom_1","efdesom_2","efdesom_3","efdesom_12","rrptct","stufacr","eaptot_10000","eaptot_10050","eaptot_27000","eaptot_30000","eaptot_37000","eaptot_10010","eaptot_10020","eaptot_10030","eappt_10000","eappt_10050","eappt_27000","eappt_30000","eappt_37000","eappt_10010","eappt_10020","eappt_10030","cases.x","deaths.x","cases.y","deaths.y")
+mergeCols <- c("id")
+data <- left_join(data, mydata9, by = mergeCols)
+data <- left_join(data, mydata10, by = mergeCols)
+```
+
+```{r include=FALSE}
+colnames(data)[29] <- "slo"
+colnames(data)[39] <- "indistrictug"
+colnames(data)[40] <- "instateug"
+colnames(data)[41] <- "outstateug"
+colnames(data)[42] <- "indistrictg"
+colnames(data)[43] <- "instateg"
+colnames(data)[44] <- "outstateg"
+colnames(data)[82] <- "state.cases"
+colnames(data)[83] <- "state.deaths"
+colnames(data)[84] <- "county.cases"
+colnames(data)[85] <- "county.deaths"
+```
+
+
+```{r include=FALSE}
+# Convert to useful data classes
+data$id <- NULL
+data$city <- as.character(data$city)
+data$sector <- as.integer(as.character(data$sector))
+data$ugoffer <- as.integer(as.character(data$ugoffer))
+data$groffer <- as.integer(as.character(data$groffer))
+data$hbcu <- as.integer(as.character(data$hbcu))
+data$hospital <- as.integer(as.character(data$hospital))
+data$tribal <- as.integer(as.character(data$tribal))
+data$locale <- as.integer(as.character(data$locale))
+data$c18ugprf <- as.integer(as.character(data$c18ugprf))
+data$f1systyp <- as.integer(as.character(data$f1systyp))
+data$countynm <- as.character(data$countynm)
+data$Size <- as.integer(as.character(data$Size))
+data$rellafil <- as.integer(as.character(data$rellafil))
+data$calsys <- as.integer(as.character(data$calsys))
+data$slo <- as.integer(as.character(data$slo))
+data$dstnugc <- as.integer(as.character(data$dstnugc))
+data$distcrs <- as.integer(as.character(data$distcrs))
+data$distnced <- as.integer(as.character(data$distnced))
+data$disabpct <- as.integer(as.character(data$disabpct))
+data$alloncam <- as.integer(as.character(data$alloncam))
+data$room <- as.integer(as.character(data$room))
+data$roomcap <- as.integer(as.character(data$roomcap))
+data$board <- as.integer(as.character(data$board))
+data$indistrictug <- as.integer(as.character(data$indistrictug))
+data$instateug <- as.integer(as.character(data$instateug))
+data$outstateug <- as.integer(as.character(data$instateug))
+data$indistrictg <- as.integer(as.character(data$indistrictg))
+data$instateg <- as.integer(as.character(data$instateg))
+data$outstateg <- as.integer(as.character(data$outstateg))
+data$dstngc <- as.integer(as.character(data$dstngc))
+```
+
+
+```{r include=FALSE}
+# Recode #
+data$hospital[data$hospital<0] <- NA
+data$c18ugprf[data$c18ugprf<=0] <- NA
+data$rellafil[data$rellafil<0] <- NA
+data$calsys[data$calsys<0] <- NA
+data$dstngc[data$dstngc<0] <- NA
+data$slo[data$slo<0] <- NA
+data$dstnugc[data$dstnugc<0] <- NA
+data$distcrs[data$distcrs<0] <- NA
+data$distnced[data$distnced<0] <- NA
+data$alloncam[data$alloncam<0] <- NA
+data$room[data$room<0] <- NA
+data$board[data$board<0] <- NA
+data$sector[data$sector==0] <- NA
+
+data$ugoffer <- NULL
+data$groffer <- ifelse(data$groffer == 1, 0, ifelse(data$groffer == 2, 1, 99))
+data$hbcu <- ifelse(data$hbcu == 1, 0, ifelse(data$hbcu == 2, 1, 99))
+data$hospital <- ifelse(data$hospital == 1, 0, ifelse(data$hospital == 2, 1, 99))
+data$tribal <- NULL
+data$f1systyp <- ifelse(data$f1systyp == 1, 0, ifelse(data$f1systyp == 2, 1, 99))
+data$Size <- ifelse(data$Size == 1, 0, ifelse(data$Size == 2, 1, ifelse(data$Size == 3, 2, ifelse(data$Size == 4, 3, ifelse(data$Size == 5, 4, 99)))))
+data$calsys <- ifelse(data$calsys == 1, 0, ifelse(data$calsys == 2, 1, ifelse(data$calsys == 3, 2, ifelse(data$calsys == 4, 3, ifelse(data$calsys == 5, 4, ifelse(data$calsys == 7, 5, 99))))))
+data$distnced <- NULL
+data$alloncam <- ifelse(data$alloncam == 1, 0, ifelse(data$alloncam == 2, 1, 99))
+data$room <- ifelse(data$room == 1, 0, ifelse(data$room == 2, 1, 99))
+data$board <- ifelse(data$board == 1, 0, ifelse(data$board == 2, 1, ifelse(data$board == 3, 2, 99)))
+data$sector <- ifelse(data$sector == 1, 0, ifelse(data$sector == 2, 1, ifelse(data$sector == 3, 2, ifelse(data$sector == 4, 3, ifelse(data$sector == 5, 4, ifelse(data$sector == 6, 5, ifelse(data$sector == 7, 6, ifelse(data$sector == 8, 7, ifelse(data$sector == 9, 8, 99)))))))))
+data$locale <- ifelse(data$locale == 11, 0, ifelse(data$locale == 12, 1, ifelse(data$locale == 13, 2, ifelse(data$locale == 21, 3, ifelse(data$locale == 22, 4, ifelse(data$locale == 23, 5, ifelse(data$locale == 31, 6, ifelse(data$locale == 32, 7, ifelse(data$locale == 33, 8, ifelse(data$locale == 41, 9, ifelse(data$locale == 42, 10, ifelse(data$locale == 43, 11, 99))))))))))))
+data$c18ugprf <- data$c18ugprf - 1 
+data$rellafil <- NULL
+```
+
+
+```{r include=FALSE}
+## AUGMENT DEPENDING ON "test 4" BELOW IF NEEDED ##
+# remove fake repeated institution errors #
+data <- filter(data, institution != "Bethel University" | city != "McKenzie")
+data <- data %>% filter(!countynm %in% c("Tuolumne","Boone","Fairfax") | institution != "Columbia College") 
+data <- data %>% filter(countynm != "Maricopa" | institution != "Glendale Community College") 
+data <- data %>% filter(!countynm %in% c("Knox","Lancaster") | institution != "Union College")
+data <- data %>% filter(!city %in% c("Fulton","Salt Lake City") | institution != "Westminster College")
+data <- filter(data, institution != "Wheaton College" | city != "Norton")
+data <- filter(data, institution != "Emmanuel College" | city != "Franklin Springs")
+```
+
+
+```{r}
+## THIS SHOULD BE ZERO ROWS ##
+test4 <- data %>% group_by(institution) %>% filter(n()>1) ## df of rows *without* NA in "id" and only unique "id"s AND repeated "institution"s (i.e. there are incorrect "id"s)
+test4
+data %>% filter(plan == "Link")
+```
+
+```{r}
+sentiments <- read_csv("~/Desktop/College-Plans_withSentiment.csv")
+sentiments <- sentiments %>% dplyr::select("institution","text_length","Sent_Score","Sentiment")
+data <- left_join(data, sentiments)
+```
+
+```{r include=FALSE}
+write.csv(data, "~/Desktop/Dataframe_Draft.csv")
+names(data)
+```
+
