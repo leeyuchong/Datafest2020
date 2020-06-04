@@ -26,3 +26,9 @@ Our group uses data on over 700 higher education institutions nationwide. This s
   - sanin04: archivsts, curators, librarians/library technicians and people in academic affairs and other educational services
   - sanin05: management positions
   - sanin08: community, social services, legal, arts, design, entertainment, sports and media
+
+# Key Findings
+Our initial hypothesis of tying the sentiment score to the plans of the college, did not end up being a useful avenue, because schools that were going online, actually tended to issue more positive sentiment statements. Thus, sentiment score wasn’t a significant predictor in our final model. Similarly although multinomial logistic regression was an option to consider, when we think of the group effect, affecting every variable we needed to use the multilevel model. The significant predictors for the model were number of applications per year, endowment in $, whether students were required to stay on campus, whether board provided, number of locations the students are from, student-faculty ratio, Covid-19 cases in the county, average staff salary, salary outlays for librarians, management and social service. And finally, using the random intercept model, we get the appropriate coefficients for these predictors based on group stage: state.
+
+# Concluding Remark
+The model informed us that schools are heavily subject to states’ financial support, while students’ demographics (foreigners or native). Researchers have concurred that large and/or private schools were more likely to weather the disruption, while smaller and/or public schools whose incomes depend primarily on domestic students.
