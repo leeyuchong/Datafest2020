@@ -5,6 +5,8 @@ NOTE: The code is provided for reference and depends on the output given by sect
 
 Visualisations for the data can be found here: https://notbanner.ml/datafest2020
 
+Specific information about this project can be found in the Wiki
+
 # Motivation
 The COVID-19 pandemic has posed multifaceted socio-economic disruptions, among which education discontinuance has threatened to both halt personal intellectual and societal progresses as well as aggravating systemic inequalities. College students are especially concerned about their institutions’ future plan for admission and operation. For many, deciding to continue their education without being able to physically interact with their instructors and peers can incur tremendous financial losses. In this study, we attempt to establish a linear model to predict the probability of reopening in the Fall semester of 2020 among higher education institutions in the U.S. using institutional characteristics such as financial resources and geographical/socio-economic backgrounds, among others, as explanatory variables. 
 
