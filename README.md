@@ -10,3 +10,17 @@ The COVID-19 pandemic has posed multifaceted socio-economic disruptions, among w
 
 # Methods
 Our group uses data on over 700 higher education institutions nationwide. This sample includes several indicators used to determine the appropriate response to the public health and financial threats pertaining to COVID-19. We use the schools’ plan in the fall as the dependent variable, dividing the variable into three levels: open or hybrid (1), waiting to make a decision (0.5), and online (0). This logit model allows us to yield predictions for a non-binary ordinal dependent variable. To accommodate for an ordinal outcome, we employ the multinomial logistic multiple regression. Nevertheless, in the process of working, we also notice that data clustering poses another problem. This is because schools in different states, counties, cities, etc. tended to have different financial resources alongside student-faculty and surrounding areas’ demographics, among other factors. Therefore, each state can be treated as a “group” of data that has a different residual term (assuming that inter-group residuals are independent), thus violating the assumption of independence among neighboring error terms on school (this is the lowest level of units belonging to a group) of the logistic regression model. Therefore, we also consider the multilevel model, in which we establish a random intercept (with fixed slope) and a mixed effects (with random intercept and slope) multiple linear regression model. The linear models adopted yield a continuous dependent variable - a disadvantage that the multinomial logit model could compensate. We are aware that there have been hybrids of the logistic and the multilevel models, yet have not been mathematically and technically capable of producing such a model. 
+
+# Key Variables
+- Distcrs: Whether remote courses are offered (Dummy variable)
+- Applications: Number of applications per year
+- Endowment: School endowment in dollars
+- alloncam: Whether all students are required to stay on campus (Dummy variable)
+- board: Whether room and board is provided (Categorical variable)
+- number_locations: number of locations students are from (out-of-state and international)
+- county: number of COVID-19 cases in the county
+- saeq9at: average salary for instructional staff (specifically for associate professors) equated to a 9-month contract total
+- sanin: salary outlays for full-time staff
+  - sanin04: archivsts, curators, librarians/library technicians and people in academic affairs and other educational services
+  - sanin05: management positions
+  - sanin08: community, social services, legal, arts, design, entertainment, sports and media
